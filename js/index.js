@@ -310,12 +310,17 @@ function cmdArrange() {
       if (model.isSkipped(node)) continue;
       const spot = placed.get(node.id);
       if (!spot) continue;
-      const existing = model.cellOf(node);
+      /* Already-assigned nodes are pins — leave their cells alone. Fresh
+       * nodes go into a SINGLE-ROW table: graphs here are horizontal, so the
+       * barycenter position becomes the stacking order inside the column's
+       * one cell instead of a row number. Rows appear later, by hand (drag,
+       * rowspan) — never from the auto-layout. */
+      if (model.cellOf(node)) continue;
       model.setCell(node, {
         col: spot.col,
-        row: spot.row,
-        rowspan: existing?.rowspan ?? 1,
-        order: existing?.order ?? 0,
+        row: 0,
+        rowspan: 1,
+        order: spot.row,
       });
     }
     model.compactRows(graph);
