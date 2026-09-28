@@ -1,28 +1,33 @@
 /*
- * drag.js — pointer-level drag interception with a live drop-target preview.
+ * drag.js — pointer-level interception for the two grid interactions:
  *
- * Two node-picking paths, because the frontend has two node renderers:
- *   - Vue nodes (nodes v2, the default here): nodes are DOM elements carrying
- *     data-node-id — the drag starts on one of those. The Vue composable
- *     moves the node live during the drag (not interceptable from a classic
- *     extension, and it does not need to be): we only watch the pointer,
- *     paint the target cell, and snap everything on release.
- *   - classic canvas: the pointerdown lands on the canvas element; the node
- *     is resolved with graph.getNodeOnPos at graph coordinates.
+ *   node drag: pick a node (Vue nodes are DOM elements carrying data-node-id;
+ *     classic canvas resolves via graph.getNodeOnPos), preview the drop target
+ *     while the pointer moves, hand the drop to index.js. The Vue composable
+ *     moves the node live during the drag — not interceptable from a classic
+ *     extension and it does not need to be: everything snaps on release.
+ *     On the first live move the routing of the node's links is dropped
+ *     (callbacks.onNodeDragStart) so they rubber-band straight to the node
+ *     instead of staying pinned to its old cell.
  *
- * The drop commit itself lives in index.js (it needs transact/relayout); this
- * module only turns pointer events into (node, hitTest result, graph x/y).
+ *   column resize: spreadsheet-style grips in the top ghost band, one above
+ *     each vertical gutter from V1 on; dragging resizes the column to its
+ *     left, live (solver re-run per move), cables regenerated on release.
+ *
+ * This module only turns pointer events into callbacks — the graph mutations
+ * and undo pairing live in index.js.
  */
 
 import * as model from './model.js';
-import { hitTest } from './layout.js';
+import { hitTest, resizeHandleAt } from './layout.js';
 import * as paint from './paint.js';
 
 /* A press is a drag once the pointer has travelled this many CLIENT px —
  * below it, it is a click/widget interaction and none of ours. */
 const DRAG_THRESHOLD = 8;
 
-let state = null;   // {node, sx, sy, live}
+let state = null;        // {kind: 'node'|'resize', ...}
+let cursorSet = false;   // we own the canvas cursor only while over a grip
 
 function toGraph(app, e) {
   const canvas = app.canvas;
@@ -47,42 +52,73 @@ function pickNode(app, graph, e) {
 }
 
 /**
- * Wires the document-level listeners. `getContext()` -> {graph, grid} | null,
- * `commit(node, hit, gx, gy)` performs the drop. Call once from setup().
+ * Wires the document-level listeners (capture phase, so node-level handlers
+ * cannot swallow the events first). `getContext()` -> {graph, grid} | null.
+ * callbacks: onNodeDragStart(node), onNodeDrop(node, hit|null, gx),
+ * onResizeStart(gutter), onResizeMove(gutter, dxGraph), onResizeEnd(commit).
  */
-export function install(app, getContext, commit) {
+export function install(app, getContext, callbacks) {
   document.addEventListener('pointerdown', (e) => {
     state = null;
     if (e.button !== 0) return;
     const live = getContext();
-    if (!live || !paint.getBands()) return;
+    const bands = paint.getBands();
+    if (!live || !bands) return;
+    const [gx, gy] = toGraph(app, e);
+    const handle = resizeHandleAt(bands, model.cfg, gx, gy);
+    if (handle) {
+      state = { kind: 'resize', gutter: handle.gutter, startGx: gx, live: false };
+      e.preventDefault();
+      e.stopPropagation();
+      return;
+    }
     const node = pickNode(app, live.graph, e);
     if (!node) return;
-    state = { node, sx: e.clientX, sy: e.clientY, live: false };
+    state = { kind: 'node', node, sx: e.clientX, sy: e.clientY, live: false };
   }, true);
 
   document.addEventListener('pointermove', (e) => {
-    if (!state) return;
+    if (!state) {
+      /* Idle hover: advertise the grips with a col-resize cursor. */
+      const bands = paint.getBands();
+      const canvasEl = app.canvas?.canvas;
+      if (!bands || !canvasEl || !getContext()) return;
+      const [gx, gy] = toGraph(app, e);
+      const over = !!resizeHandleAt(bands, model.cfg, gx, gy);
+      if (over && !cursorSet) { canvasEl.style.cursor = 'col-resize'; cursorSet = true; }
+      else if (!over && cursorSet) { canvasEl.style.cursor = ''; cursorSet = false; }
+      return;
+    }
+    const [gx, gy] = toGraph(app, e);
+    if (state.kind === 'resize') {
+      if (!state.live) {
+        state.live = true;
+        callbacks.onResizeStart(state.gutter);
+      }
+      callbacks.onResizeMove(state.gutter, gx - state.startGx);
+      return;
+    }
     if (!state.live) {
       if (Math.hypot(e.clientX - state.sx, e.clientY - state.sy) < DRAG_THRESHOLD) return;
       state.live = true;
+      callbacks.onNodeDragStart(state.node);
     }
-    const [gx, gy] = toGraph(app, e);
     paint.setHighlight(hitTest(paint.getBands(), gx, gy, model.cfg));
     app.canvas.setDirty(true, true);
   }, true);
 
-  const finish = (e, commitDrop) => {
+  const finish = (e, commit) => {
     if (!state) return;
-    const wasLive = state.live;
-    const node = state.node;
+    const s = state;
     state = null;
-    if (!wasLive) return;
-    paint.setHighlight(null);
-    if (commitDrop) {
-      const [gx, gy] = toGraph(app, e);
-      commit(node, hitTest(paint.getBands(), gx, gy, model.cfg), gx, gy);
+    if (!s.live) return;
+    if (s.kind === 'resize') {
+      callbacks.onResizeEnd(commit);
+      return;
     }
+    paint.setHighlight(null);
+    const [gx, gy] = toGraph(app, e);
+    callbacks.onNodeDrop(s.node, commit ? hitTest(paint.getBands(), gx, gy, model.cfg) : null, gx, gy);
     app.canvas.setDirty(true, true);
   };
   document.addEventListener('pointerup', (e) => finish(e, true), true);

@@ -174,6 +174,22 @@ export function hitTest(solved, x, y, opts) {
   return { type: 'outside' };
 }
 
+/**
+ * Spreadsheet-style column resize handle under the pointer, or null. Handles
+ * live in the TOP ghost band, one above each vertical gutter from V1 on
+ * (V0 has no column to its left); dragging one resizes column `gutter - 1`.
+ */
+export function resizeHandleAt(solved, opts, x, y) {
+  if (!solved) return null;
+  const top = ghosts(solved, opts).find((g) => g.side === 'top');
+  if (!top || y < top.y || y >= top.y + top.h) return null;
+  for (let j = 1; j < solved.vGutters.length; j++) {
+    const b = solved.vGutters[j];
+    if (x >= b.x0 - 6 && x < b.x1 + 6) return { gutter: j };
+  }
+  return null;
+}
+
 /** Lane centreline coordinate inside a gutter band (works for both axes). */
 export function laneCoord(band0, lane, opts) {
   return band0 + opts.laneMargin + (lane + 0.5) * opts.laneSpacing;

@@ -190,6 +190,31 @@ export function materialize(graph, grid, solved, plan) {
   }
 }
 
+/**
+ * Drops the plugin-owned routes of every link touching `node`, so a drag
+ * shows the links rubber-banding straight to the node instead of staying
+ * pinned to its old cell. Chains containing a foreign (user) reroute are left
+ * whole — mixed chains are the user's. The caller regenerates on drop.
+ */
+export function clearNodeRoutes(graph, grid, node) {
+  const c = model.claims(grid);
+  for (const link of graph.links.values()) {
+    if (link.origin_id !== node.id && link.target_id !== node.id) continue;
+    const ids = [];   // collected tail -> root, which is also safe delete order
+    let cursor = link.parentId, guard = 0, foreign = false;
+    while (cursor !== undefined && guard++ < 64) {
+      if (c[cursor] === undefined) { foreign = true; break; }
+      ids.push(cursor);
+      cursor = graph.reroutes.get(cursor)?.parentId;
+    }
+    if (foreign) continue;
+    for (const id of ids) {
+      graph.removeReroute(Number(id));
+      delete c[id];
+    }
+  }
+}
+
 const DRAW_WRAPPED = Symbol('gridcm.rerouteDrawWrapped');
 
 /**

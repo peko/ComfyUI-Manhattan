@@ -152,27 +152,100 @@ function ensureOrthoLinkMode() {
   }
 }
 
+/* --- drag lifecycle -------------------------------------------------------
+ * One undo pair spans the whole gesture: route clearing on the first live
+ * move, then the drop relayout. changeTracker counts nested pairs, so the
+ * transact() inside dropCommit composes into the same single snapshot. */
+let dragPaired = false;
+let resizeCtx = null;   // {col, startWidth} while a grip drag is live
+
+function nodeDragStarted(node) {
+  const graph = activeGraph();
+  if (!graph || node.graph !== graph) return;
+  app.canvas.emitBeforeChange();
+  dragPaired = true;
+  /* Rubber-band: drop this node's plugin routes so its links point straight
+   * at it while it moves. Regenerated on drop (or snap-back). */
+  reroutes.clearNodeRoutes(graph, model.getGrid(graph), node);
+  graph.setDirtyCanvas(false, true);
+}
+
+function nodeDropped(node, hit, gx, gy) {
+  try {
+    dropCommit(node, hit, gx, gy);
+  } finally {
+    if (dragPaired) {
+      dragPaired = false;
+      app.canvas.emitAfterChange();
+    }
+  }
+}
+
+function colResizeStart(gutter) {
+  const graph = activeGraph();
+  const grid = graph && model.getGrid(graph);
+  const col = gutter - 1;
+  if (!grid?.columns[col]) return;
+  app.canvas.emitBeforeChange();
+  resizeCtx = { col, startWidth: grid.columns[col].width };
+}
+
+function colResizeMove(gutter, dx) {
+  const graph = activeGraph();
+  if (!graph || !resizeCtx) return;
+  const grid = model.getGrid(graph);
+  grid.columns[resizeCtx.col].width = Math.max(120, Math.round(resizeCtx.startWidth + dx));
+  relayout(graph, grid, { reroute: false });   // live: solver only, cables lag
+  graph.setDirtyCanvas(true, true);
+}
+
+function colResizeEnd(commit) {
+  const graph = activeGraph();
+  if (!resizeCtx) return;
+  const ctx = resizeCtx;
+  resizeCtx = null;
+  if (graph) {
+    const grid = model.getGrid(graph);
+    if (!commit) grid.columns[ctx.col].width = ctx.startWidth;
+    relayout(graph, grid, { reroute: true });
+    graph.setDirtyCanvas(true, true);
+  }
+  app.canvas.emitAfterChange();
+}
+
 /** Drop commit for the drag layer: cell -> (re)assign & stack, ghost ->
- * split outward into a fresh column/row. Anything else snaps the node back. */
-function dropCommit(node, hit, gx) {
+ * split outward into a fresh column/row. Anything else snaps the node back
+ * (with rerouting — the drag start cleared this node's cables). */
+function dropCommit(node, hit, gx, gy) {
   const graph = activeGraph();
   if (!graph || node.graph !== graph) return;
   const grid = model.getGrid(graph);
   if (!hit || (hit.type !== 'cell' && hit.type !== 'ghost')) {
-    transact(() => relayout(graph, grid, { reroute: false }));   // snap back
+    transact(() => relayout(graph, grid, { reroute: true }));   // snap back
     return;
   }
   transact(() => {
     const prev = model.cellOf(node) ?? { rowspan: 1 };
     model.setSkip(node, false);
     if (hit.type === 'cell') {
-      let maxOrder = -1;
+      /* Insert into the stack at the drop's y: above the first tenant whose
+       * vertical centre lies below the pointer. Dropping above the top
+       * node's centre makes ours the top; between two centres — between. */
+      const tenants = [];
       for (const { node: other, cell } of model.assignments(graph)) {
         if (other !== node && cell.col === hit.col && cell.row === hit.row) {
-          maxOrder = Math.max(maxOrder, cell.order);
+          const title = window.LiteGraph.NODE_TITLE_HEIGHT;
+          const outerTop = other.pos[1] - title;
+          const outerH = (other.flags?.collapsed ? 0 : other.size[1]) + title;
+          tenants.push({ other, cell, midY: outerTop + outerH / 2 });
         }
       }
-      model.setCell(node, { col: hit.col, row: hit.row, rowspan: prev.rowspan, order: maxOrder + 1 });
+      tenants.sort((a, b) => a.cell.order - b.cell.order);
+      const insertAt = tenants.filter((t) => t.midY < gy).length;
+      tenants.forEach((t, i) => {
+        model.setCell(t.other, { ...t.cell, order: i < insertAt ? i : i + 1 });
+      });
+      model.setCell(node, { col: hit.col, row: hit.row, rowspan: prev.rowspan, order: insertAt });
     } else {
       /* nearest column for the horizontal ghosts */
       const bands = paint.getBands();
@@ -498,7 +571,13 @@ app.registerExtension({
       return graph ? { graph, grid: model.getGrid(graph) } : null;
     };
     paint.install(app, app.canvas, context);
-    drag.install(app, context, dropCommit);
+    drag.install(app, context, {
+      onNodeDragStart: nodeDragStarted,
+      onNodeDrop: nodeDropped,
+      onResizeStart: colResizeStart,
+      onResizeMove: colResizeMove,
+      onResizeEnd: colResizeEnd,
+    });
     if (vueMode()) {
       console.log('[gridcm] Vue nodes rendering is on: layout/cables fully work, band shading may be absent');
     }

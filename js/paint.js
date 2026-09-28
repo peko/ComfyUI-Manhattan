@@ -171,6 +171,25 @@ function drawBands(ctx, s) {
   }
   ctx.setLineDash([]);
 
+  /* Column resize grips: a bar pair above every vertical gutter from V1 on,
+   * sitting in the top ghost band like spreadsheet column dividers. */
+  const topGhost = ghostRects.find((g) => g.side === 'top');
+  if (topGhost) {
+    const gy = topGhost.y + topGhost.h / 2;
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.38)';
+    ctx.lineWidth = 2;
+    for (let j = 1; j < s.vGutters.length; j++) {
+      const gx = (s.vGutters[j].x0 + s.vGutters[j].x1) / 2;
+      ctx.beginPath();
+      ctx.moveTo(gx - 3, gy - 9); ctx.lineTo(gx - 3, gy + 9);
+      ctx.moveTo(gx + 3, gy - 9); ctx.lineTo(gx + 3, gy + 9);
+      /* tiny outward arrows so the grip reads as "drag horizontally" */
+      ctx.moveTo(gx - 8, gy); ctx.lineTo(gx - 12, gy);
+      ctx.moveTo(gx + 8, gy); ctx.lineTo(gx + 12, gy);
+      ctx.stroke();
+    }
+  }
+
   /* The live drop target under the pointer. */
   if (highlight) {
     let r = null;
