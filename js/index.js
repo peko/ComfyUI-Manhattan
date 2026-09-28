@@ -136,16 +136,17 @@ function isClaimedAndActive(reroute) {
 }
 
 /** Orthogonal traces need a non-spline link mode; splines cut every gutter
- * corner. Arrange flips the global setting once (user-visible, reversible in
- * Settings), gated by gridcm.orthoLinks. */
-function ensureOrthoLinkMode() {
+ * corner. The mode follows the Manhattan toggle: Linear while the grid is
+ * on, back to the stock Spline when it goes off. Gated by gridcm.orthoLinks. */
+function setLinkMode(manhattanOn) {
   if (!orthoLinks) return;
-  if (app.canvas.links_render_mode !== window.LiteGraph.SPLINE_LINK) return;
+  const want = manhattanOn ? window.LiteGraph.LINEAR_LINK : window.LiteGraph.SPLINE_LINK;
+  if (app.canvas.links_render_mode === want) return;
   try {
-    app.ui.settings.setSettingValue('Comfy.LinkRenderMode', window.LiteGraph.LINEAR_LINK);
-    if (!announcedLinkMode) {
+    app.ui.settings.setSettingValue('Comfy.LinkRenderMode', want);
+    if (manhattanOn && !announcedLinkMode) {
       announcedLinkMode = true;
-      toast('Link Render Mode switched to Linear for orthogonal gutters (Settings → GridCM to opt out)');
+      toast('Link Render Mode follows the grid: Linear while on, Spline when off (Settings → GridCM to opt out)');
     }
   } catch (e) {
     console.error('[gridcm] could not switch link render mode', e);
@@ -319,9 +320,9 @@ function cmdArrange() {
     }
     model.compactRows(graph);
     model.compactColumns(graph, model.getGrid(graph));
-    ensureOrthoLinkMode();
     relayout(graph, model.getGrid(graph), { reroute: true });
   });
+  setLinkMode(true);
   syncToggleButton(true);
 }
 
@@ -351,11 +352,16 @@ function cmdToggleGrid() {
       relayout(graph, grid, { reroute: true });
     });
   } else {
+    /* Off = back to a stock-looking graph: the routing points only make
+     * sense while the grid drives them, so they are removed outright and
+     * the links fall back to plain splines. Toggling on regenerates. */
+    transact(() => reroutes.cleanup(graph, grid));
     paint.setBands(null);
     graph.setDirtyCanvas(true, true);
   }
+  setLinkMode(grid.enabled);
   syncToggleButton(grid.enabled);
-  toast(grid.enabled ? 'grid on' : 'grid off (positions and cables stay)');
+  toast(grid.enabled ? 'grid on' : 'grid off (cables back to splines, positions stay)');
 }
 
 function cmdColumnWidth() {

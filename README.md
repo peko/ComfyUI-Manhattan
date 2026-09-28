@@ -44,12 +44,13 @@ switch:
 - first click on a fresh workflow — **arranges** the graph into a grid
   (columns follow dataflow depth: loaders left, samplers midway, outputs
   right);
-- afterwards it **toggles** Manhattan mode per workflow: *off* frees the
-  nodes for ordinary editing (positions and cables stay), *on* snaps
-  everything back to its remembered cell and re-routes the cables.
+- afterwards it **toggles** Manhattan mode per workflow: *off* removes the
+  routing points and returns the links to plain splines — the graph looks
+  stock again (positions and cell assignments stay); *on* snaps everything
+  back to its remembered cell and rebuilds the routes.
 
-Arranging also switches the global *Link Render Mode* from Spline to Linear —
-splines cut every gutter corner. Opt out in *Settings → GridCM*.
+The *Link Render Mode* follows the toggle — Linear while on (splines cut
+every gutter corner), Spline when off. Opt out in *Settings → GridCM*.
 
 **Everything else is a drag:**
 
