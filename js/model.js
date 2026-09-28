@@ -164,7 +164,11 @@ export function rowCount(graph) {
 }
 
 /** Removes empty columns and their width entries — the column mirror of
- * compactRows. A column is occupied when any assignment sits in it. */
+ * compactRows. A column is occupied when any assignment sits in it. Also
+ * truncates TRAILING width entries beyond the last occupied column: the
+ * ghost guides make standing empty edge columns pointless, and leaving the
+ * tail in grid.columns is exactly what rendered them (the solver takes
+ * columns.length as the column count). */
 export function compactColumns(graph, grid) {
   const assigned = assignments(graph);
   if (!assigned.length) return;
@@ -178,7 +182,7 @@ export function compactColumns(graph, grid) {
     if (!covered.has(c)) empty++;
     else keptWidths.push(grid.columns[c] ?? { width: cfg.colDefault });
   }
-  if (!empty) return;
+  if (!empty && grid.columns.length <= maxCol + 1) return;
   for (const { node, cell } of assigned) {
     const to = cell.col - shift[cell.col];
     if (to !== cell.col) node.properties[P_COL] = to;

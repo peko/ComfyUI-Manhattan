@@ -190,11 +190,24 @@ function colResizeStart(gutter) {
   resizeCtx = { col, startWidth: grid.columns[col].width };
 }
 
+/** The narrowest a column may go: its widest node's natural width plus the
+ * cell padding — squeezing past that would push nodes into the gutters. */
+function minColWidth(graph, col) {
+  let min = 120;
+  for (const { node, cell } of model.assignments(graph)) {
+    if (cell.col === col) {
+      min = Math.max(min, enforce.naturalMinWidth(node) + 2 * model.cfg.cellPad);
+    }
+  }
+  return min;
+}
+
 function colResizeMove(gutter, dx) {
   const graph = activeGraph();
   if (!graph || !resizeCtx) return;
   const grid = model.getGrid(graph);
-  grid.columns[resizeCtx.col].width = Math.max(120, Math.round(resizeCtx.startWidth + dx));
+  grid.columns[resizeCtx.col].width = Math.max(
+    minColWidth(graph, resizeCtx.col), Math.round(resizeCtx.startWidth + dx));
   relayout(graph, grid, { reroute: false });   // live: solver only, cables lag
   graph.setDirtyCanvas(true, true);
 }
@@ -305,15 +318,22 @@ function cmdArrange() {
       });
     }
     model.compactRows(graph);
+    model.compactColumns(graph, model.getGrid(graph));
     ensureOrthoLinkMode();
     relayout(graph, model.getGrid(graph), { reroute: true });
   });
+  syncToggleButton(true);
 }
 
 function cmdReflow() {
   const graph = activeGraph();
   if (!graph) return;
-  transact(() => relayout(graph, model.getGrid(graph), { reroute: true }));
+  transact(() => {
+    const grid = model.getGrid(graph);
+    model.compactRows(graph);
+    model.compactColumns(graph, grid);
+    relayout(graph, grid, { reroute: true });
+  });
 }
 
 function cmdToggleGrid() {
@@ -323,22 +343,19 @@ function cmdToggleGrid() {
   if (!grid) return toast('no grid in this workflow yet — run Arrange first');
   grid.enabled = !grid.enabled;
   if (grid.enabled) {
-    transact(() => relayout(graph, grid, { reroute: false }));
+    /* Re-enable = snap everything back to the stored cells; the user may
+     * have moved nodes freely meanwhile, so the cables need a fresh pass. */
+    transact(() => {
+      model.compactRows(graph);
+      model.compactColumns(graph, grid);
+      relayout(graph, grid, { reroute: true });
+    });
   } else {
     paint.setBands(null);
     graph.setDirtyCanvas(true, true);
   }
+  syncToggleButton(grid.enabled);
   toast(grid.enabled ? 'grid on' : 'grid off (positions and cables stay)');
-}
-
-function cmdAddColumn() {
-  const graph = activeGraph();
-  if (!graph) return;
-  const grid = model.getGrid(graph);
-  transact(() => {
-    grid.columns.push({ width: model.cfg.colDefault });
-    relayout(graph, grid, { reroute: true });
-  });
 }
 
 function cmdColumnWidth() {
@@ -350,10 +367,12 @@ function cmdColumnWidth() {
     if (parts.some((n) => !Number.isFinite(n))) return;
     transact(() => {
       if (parts.length === 1) {
-        for (const col of grid.columns) col.width = Math.max(120, parts[0]);
+        grid.columns.forEach((col, i) => {
+          col.width = Math.max(minColWidth(graph, i), parts[0]);
+        });
       } else {
         const col = grid.columns[parts[0]];
-        if (col) col.width = Math.max(120, parts[1]);
+        if (col) col.width = Math.max(minColWidth(graph, parts[0]), parts[1]);
       }
       relayout(graph, grid, { reroute: true });
     });
@@ -376,46 +395,8 @@ function cmdStackSelection() {
   });
 }
 
-/* --- node menu operations --------------------------------------------------- */
-
-function moveNodeToColumn(graph, node, delta) {
-  const cell = model.cellOf(node);
-  if (!cell) return;
-  transact(() => {
-    const grid = model.ensureGrid(graph);
-    let to = cell.col + delta;
-    if (to < 0) {
-      /* Moving left out of column 0 splits outward: a fresh first column. */
-      model.insertColumn(graph, grid, 0);
-      to = 0;
-    }
-    model.ensureColumns(grid, to + 1);
-    model.setCell(node, { ...model.cellOf(node), col: to });
-    model.compactRows(graph);
-    model.compactColumns(graph, grid);
-    relayout(graph, grid, { reroute: true });
-  });
-}
-
-function moveNodeRow(graph, node, delta) {
-  const cell = model.cellOf(node);
-  if (!cell) return;
-  const to = cell.row + delta;
-  if (to < 0) return;
-  transact(() => {
-    /* Swap with whatever starts at the target row in the same column, so
-     * "move up" through a full column reads as reordering, not merging.
-     * Moving into empty space just moves (and compaction tidies up). */
-    for (const { node: other, cell: oc } of model.assignments(graph)) {
-      if (other !== node && oc.col === cell.col && oc.row === to) {
-        model.setCell(other, { ...oc, row: cell.row });
-      }
-    }
-    model.setCell(node, { ...cell, row: to });
-    model.compactRows(graph);
-    relayout(graph, model.getGrid(graph), { reroute: true });
-  });
-}
+/* --- node menu operations (the drag layer covers placement; only what a
+ * drag cannot express stays as menu entries) --------------------------------- */
 
 function promptRowspan(graph, node) {
   const cell = model.cellOf(node);
@@ -436,6 +417,52 @@ function toggleSkip(graph, node) {
     model.compactRows(graph);
     relayout(graph, model.getGrid(graph), { reroute: true });
   });
+}
+
+/* --- the "M" toggle in the floating action bar ------------------------------
+ * One click flips Manhattan mode for the current workflow without rebuilding
+ * anything: the cell assignments already live in node properties, so ON
+ * snaps everything back to its cell (with a cable pass), OFF releases the
+ * nodes for free-form moving. First click on a grid-less workflow arranges. */
+let toggleBtn = null;
+
+function syncToggleButton(on) {
+  if (!toggleBtn) return;
+  toggleBtn.style.opacity = on ? '1' : '0.4';
+  toggleBtn.title = `Manhattan grid: ${on ? 'on' : 'off'}`;
+}
+
+function installToggleButton() {
+  const mount = () => {
+    const bar = document.querySelector('[data-testid="action-bar-buttons"]');
+    if (!bar) return;
+    if (bar.querySelector('.gridcm-toggle')) return;
+    const btn = document.createElement('button');
+    btn.className = 'gridcm-toggle';
+    btn.textContent = 'M';
+    btn.style.cssText = 'width:28px;height:28px;border:none;border-radius:6px;'
+      + 'background:transparent;color:inherit;font-weight:700;font-size:14px;'
+      + 'cursor:pointer;font-family:inherit;line-height:1;';
+    btn.addEventListener('mouseenter', () => { btn.style.background = 'rgba(128,128,128,0.25)'; });
+    btn.addEventListener('mouseleave', () => { btn.style.background = 'transparent'; });
+    btn.addEventListener('click', () => {
+      const graph = gate();
+      if (!graph) return;
+      if (!model.getGrid(graph)) {
+        cmdArrange();
+        syncToggleButton(true);
+      } else {
+        cmdToggleGrid();
+      }
+    });
+    bar.appendChild(btn);
+    toggleBtn = btn;
+    syncToggleButton(!!model.getGrid(app.graph)?.enabled);
+  };
+  mount();
+  /* The Vue action bar re-renders at will; keep re-mounting. mount() is
+   * idempotent, the observer just watches for the button vanishing. */
+  new MutationObserver(mount).observe(document.body, { childList: true, subtree: true });
 }
 
 /* --- extension ------------------------------------------------------------- */
@@ -462,17 +489,6 @@ app.registerExtension({
       type: 'boolean',
       defaultValue: true,
       onChange(value) { orthoLinks = value !== false; },
-    },
-    {
-      id: 'gridcm.ribbon',
-      name: 'Ribbon mode: bundle gutter cables into a trunk',
-      category: ['GridCM', 'Grid', 'Ribbon'],
-      type: 'boolean',
-      defaultValue: false,
-      onChange(value) {
-        paint.setRibbon(value);
-        app.graph?.setDirtyCanvas?.(true, true);
-      },
     },
     {
       id: 'gridcm.cellPad',
@@ -512,51 +528,24 @@ app.registerExtension({
     { id: 'gridcm.arrange', label: 'Grid: arrange graph into grid', function: cmdArrange },
     { id: 'gridcm.reflow-cables', label: 'Grid: reflow cables', function: cmdReflow },
     { id: 'gridcm.toggle-grid', label: 'Grid: toggle for this workflow', function: cmdToggleGrid },
-    { id: 'gridcm.add-column', label: 'Grid: add column', function: cmdAddColumn },
     { id: 'gridcm.column-width', label: 'Grid: set column width', function: cmdColumnWidth },
     { id: 'gridcm.stack-selection', label: 'Grid: stack selection into one cell', function: cmdStackSelection },
   ],
 
-  getCanvasMenuItems() {
-    if (!gate()) return [];
-    return [
-      null,
-      { content: 'Grid: arrange into grid', callback: cmdArrange },
-      { content: 'Grid: reflow cables', callback: cmdReflow },
-      { content: 'Grid: toggle for this workflow', callback: cmdToggleGrid },
-      { content: 'Grid: add column', callback: cmdAddColumn },
-      { content: 'Grid: set column width…', callback: cmdColumnWidth },
-      {
-        content: 'Grid: toggle ribbon (fat cable)',
-        callback: () => {
-          try {
-            const cur = app.ui.settings.getSettingValue('gridcm.ribbon') === true;
-            app.ui.settings.setSettingValue('gridcm.ribbon', !cur);
-          } catch (e) {
-            console.error('[gridcm] ribbon toggle failed', e);
-          }
-        },
-      },
-    ];
-  },
-
+  /* No canvas context menu: the M button + command palette cover it, and the
+   * drag layer covers node placement. The node menu keeps only what a drag
+   * cannot express: rowspan and grid opt-out. */
   getNodeMenuItems(node) {
     const graph = activeGraph();
     if (!graph || node.graph !== graph) return [];
-    const items = [null];
     if (model.isSkipped(node) || !model.cellOf(node)) {
-      items.push({ content: 'Grid: include node', callback: () => toggleSkip(graph, node) });
-      return items;
+      return [null, { content: 'Grid: include node', callback: () => toggleSkip(graph, node) }];
     }
-    items.push(
-      { content: 'Grid: move left', callback: () => moveNodeToColumn(graph, node, -1) },
-      { content: 'Grid: move right', callback: () => moveNodeToColumn(graph, node, +1) },
-      { content: 'Grid: move up', callback: () => moveNodeRow(graph, node, -1) },
-      { content: 'Grid: move down', callback: () => moveNodeRow(graph, node, +1) },
+    return [
+      null,
       { content: 'Grid: set rowspan…', callback: () => promptRowspan(graph, node) },
       { content: 'Grid: exclude node', callback: () => toggleSkip(graph, node) },
-    );
-    return items;
+    ];
   },
 
   getSelectionToolboxCommands() {
@@ -578,6 +567,20 @@ app.registerExtension({
       onResizeMove: colResizeMove,
       onResizeEnd: colResizeEnd,
     });
+    installToggleButton();
+
+    /* Collapsing/expanding changes a node's stacked height — re-solve the
+     * grid so the stack closes up (or reopens) around it. */
+    const origCollapse = window.LGraphNode.prototype.collapse;
+    window.LGraphNode.prototype.collapse = function collapseWithRelayout(...args) {
+      const result = origCollapse.apply(this, args);
+      const graph = activeGraph();
+      if (graph && this.graph === graph && model.cellOf(this)) {
+        transact(() => relayout(graph, model.getGrid(graph), { reroute: true }));
+      }
+      return result;
+    };
+
     if (vueMode()) {
       console.log('[gridcm] Vue nodes rendering is on: layout/cables fully work, band shading may be absent');
     }
@@ -602,5 +605,6 @@ app.registerExtension({
     model.pruneClaims(graph, grid);
     enforce.reassertWidths(graph);
     relayout(graph, grid, { reroute: false });
+    syncToggleButton(grid.enabled);
   },
 });

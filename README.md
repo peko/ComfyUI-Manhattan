@@ -15,14 +15,20 @@ already laid out, cables intact.
 
 ## Use
 
-- Canvas right-click → **Grid: arrange into grid** (auto-layout by dataflow
-  depth; switches Link Render Mode to Linear for clean orthogonal traces —
-  opt out in Settings → GridCM).
-- Drag nodes between cells — the target cell highlights; dashed ghost
-  columns/rows around the table split outward on drop.
-- Drag the grips above the vertical gutters to resize columns.
-- Node context menu: move between columns/rows, rowspan, exclude from grid.
-- Canvas menu: reflow cables, column width, ribbon (fat-cable) overlay.
+- Click **M** in the floating action bar: first click arranges the graph into
+  a grid (auto-layout by dataflow depth; switches Link Render Mode to Linear
+  for clean orthogonal traces — opt out in Settings → GridCM), later clicks
+  toggle Manhattan mode on/off without losing the cell assignments.
+- Drag nodes between cells — the target cell highlights; drop position picks
+  the slot inside a stack; dashed ghost columns/rows around the table split
+  outward on drop.
+- Drag the grips above the vertical gutters to resize columns (clamped at the
+  widest node's natural width).
+- Collapse a node — the stack closes up around it, collapsed title stretches
+  to the column.
+- Node context menu: rowspan, exclude from grid. Everything else is a drag.
+- Command palette: arrange, reflow cables, toggle, column width, stack
+  selection.
 
 ## Internals
 

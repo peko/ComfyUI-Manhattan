@@ -21,6 +21,7 @@
 import * as model from './model.js';
 
 const WRAPPED = Symbol('gridcm.computeSizeWrapped');
+const ORIGINAL = Symbol('gridcm.computeSizeOriginal');
 
 /* Set by index.js; returns the live graph when the grid is enabled and the
  * environment is sane (not vueNodesMode), else null. Keeping the gate in one
@@ -54,6 +55,22 @@ function wrapComputeSize(proto) {
     return size;
   };
   proto[WRAPPED] = true;
+  proto[ORIGINAL] = original;
+}
+
+/** The node's NATURAL minimum width — the unclamped computeSize result. The
+ * column minimum derives from this (min node width + padding), so a resize
+ * grip can never squeeze nodes into their gutters. */
+export function naturalMinWidth(node) {
+  let proto = Object.getPrototypeOf(node);
+  while (proto && !Object.hasOwn(proto, ORIGINAL)) proto = Object.getPrototypeOf(proto);
+  const original = proto?.[ORIGINAL];
+  try {
+    const size = original ? original.call(node) : node.computeSize?.();
+    return Math.max(window.LiteGraph.NODE_MIN_WIDTH ?? 50, size?.[0] ?? 0);
+  } catch {
+    return window.LiteGraph.NODE_WIDTH ?? 140;
+  }
 }
 
 /** Base-prototype wrap; call once from setup(). */
@@ -104,7 +121,12 @@ export function applySolved(graph, solved) {
     const spot = solved.nodes.get(node.id);
     if (!spot) continue;
     node.pos = [spot.x, spot.y + title];
-    if (!node.flags?.collapsed && node.size[0] !== spot.w) {
+    if (node.flags?.collapsed) {
+      /* Collapsed nodes render title-only at _collapsed_width; stretch that
+       * to the column so they read as full-width rows. node.size is left
+       * alone — it still holds the expanded height. */
+      node._collapsed_width = spot.w;
+    } else if (node.size[0] !== spot.w) {
       node.setSize([spot.w, node.size[1]]);
     }
   }
@@ -115,8 +137,8 @@ export function applySolved(graph, solved) {
 export function reassertWidths(graph) {
   for (const node of graph._nodes) {
     const w = widthFor(node);
-    if (w !== null && !node.flags?.collapsed && node.size[0] !== w) {
-      node.setSize([w, node.size[1]]);
-    }
+    if (w === null) continue;
+    if (node.flags?.collapsed) node._collapsed_width = w;
+    else if (node.size[0] !== w) node.setSize([w, node.size[1]]);
   }
 }

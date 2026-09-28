@@ -7,13 +7,8 @@
  * belongs. The bands come from the last solver run, cached here; nothing is
  * recomputed per frame.
  *
- * The ribbon ("fat cable") mode is deliberately an OVERLAY, not a
- * drawConnections replacement: links render through the stock pipeline (so
- * the renderedPaths / link.path / link._pos hit-testing contract, tooltips
- * and other packs' wraps — quick-connections — all stay intact for free), and
- * a thick trunk is painted over each gutter's claimed-reroute extent in
- * onDrawForeground, visually bundling the lanes. Collapsing the gutter
- * geometry itself to a constant width is a phase-2 item.
+ * (The v2 "ribbon/fat cable" trunk overlay lived here and was removed at the
+ * user's call — it never became functional enough to keep.)
  */
 
 /* Colors are deliberately low-contrast: the grid is furniture, not content.
@@ -22,17 +17,12 @@ const COL_FILL = 'rgba(255, 255, 255, 0.030)';   // content columns
 const GUTTER_FILL = 'rgba(0, 0, 0, 0.140)';      // cable gutters, both axes
 const EDGE_STROKE = 'rgba(255, 255, 255, 0.055)';
 
-/* Trunk visuals: wide soft halo + a solid core reads as one round cable. */
-const TRUNK_HALO = 'rgba(120, 130, 145, 0.28)';
-const TRUNK_CORE = 'rgba(160, 170, 185, 0.55)';
-
 /* Drop-target feedback while dragging. */
 const GHOST_STROKE = 'rgba(255, 255, 255, 0.16)';
 const HILITE_FILL = 'rgba(90, 150, 230, 0.16)';
 const HILITE_STROKE = 'rgba(110, 170, 250, 0.75)';
 
 let cached = null;     // last solver output, or null when the grid is off
-let ribbonOn = false;  // the gridcm.ribbon setting
 let highlight = null;  // hitTest result while a drag is live, else null
 let ghostRects = [];   // computed alongside `cached` by the drag layer
 
@@ -52,21 +42,7 @@ export function setHighlight(hit) {
   highlight = hit && (hit.type === 'cell' || hit.type === 'ghost') ? hit : null;
 }
 
-export function setRibbon(value) {
-  ribbonOn = value === true;
-}
-
-/** quick-connections' circuit-board renderer redraws links itself; a trunk
- * painted over its work would just be mud. Defer when it is enabled. */
-function circuitLinesActive(app) {
-  try {
-    return app.ui.settings.getSettingValue('circuit-board-lines.enable') === true;
-  } catch {
-    return false;
-  }
-}
-
-/** Chains both paint passes onto the canvas. Call once from setup().
+/** Chains the background pass onto the canvas. Call once from setup().
  * `context()` returns {graph, grid} when the grid is active, else null. */
 export function install(app, canvas, context) {
   const prevBg = canvas.onDrawBackground;
@@ -74,55 +50,6 @@ export function install(app, canvas, context) {
     prevBg?.call(this, ctx, visibleArea);
     if (cached && context()) drawBands(ctx, cached);
   };
-  const prevFg = canvas.onDrawForeground;
-  canvas.onDrawForeground = function drawGridForeground(ctx, visibleArea) {
-    prevFg?.call(this, ctx, visibleArea);
-    if (!ribbonOn || !cached || circuitLinesActive(app)) return;
-    const live = context();
-    if (live) drawTrunks(ctx, cached, live.graph, live.grid);
-  };
-}
-
-/**
- * The fat cables: one rounded trunk per gutter, spanning the extent of the
- * plugin-claimed reroutes inside it. Reroute dots and individual lanes stay
- * underneath (stock-rendered); the trunk visually bundles them.
- */
-function drawTrunks(ctx, s, graph, grid) {
-  const extents = new Map();   // 'v:2' -> {lo, hi}
-  for (const [id, claim] of Object.entries(grid.rerouteClaims ?? {})) {
-    const reroute = graph.reroutes.get(Number(id));
-    const [dir, index] = claim.gutter ?? [];
-    if (!reroute || dir === undefined) continue;
-    const along = dir === 'v' ? reroute.pos[1] : reroute.pos[0];
-    const key = `${dir}:${index}`;
-    const e = extents.get(key);
-    if (!e) extents.set(key, { lo: along, hi: along });
-    else { e.lo = Math.min(e.lo, along); e.hi = Math.max(e.hi, along); }
-  }
-
-  ctx.save();
-  ctx.lineCap = 'round';
-  for (const [key, e] of extents) {
-    if (e.hi - e.lo < 1) continue;   // a single elbow is not a bundle
-    const [dir, indexStr] = key.split(':');
-    const index = Number(indexStr);
-    const band = dir === 'v' ? s.vGutters[index] : s.hGutters[index];
-    if (!band) continue;
-    const mid = dir === 'v' ? (band.x0 + band.x1) / 2 : (band.y0 + band.y1) / 2;
-    const size = dir === 'v' ? band.x1 - band.x0 : band.y1 - band.y0;
-    const draw = (width, style) => {
-      ctx.strokeStyle = style;
-      ctx.lineWidth = width;
-      ctx.beginPath();
-      if (dir === 'v') { ctx.moveTo(mid, e.lo); ctx.lineTo(mid, e.hi); }
-      else { ctx.moveTo(e.lo, mid); ctx.lineTo(e.hi, mid); }
-      ctx.stroke();
-    };
-    draw(Math.min(size - 8, 18), TRUNK_HALO);
-    draw(Math.min(size - 14, 8), TRUNK_CORE);
-  }
-  ctx.restore();
 }
 
 function drawBands(ctx, s) {
