@@ -2,12 +2,22 @@
 
 **Column/table layout for the ComfyUI graph — with Manhattan cable routing.**
 
-Instead of free-form node placement, the canvas becomes a newspaper-style
-table: content **columns** hold stacked, full-width nodes; dedicated cable
-**gutters** between and around them carry every link as orthogonal (Manhattan)
-traces — like a well-routed PCB, not a plate of spaghetti.
+> My dear perfectionist friend! I know you also get that nervous twitch every
+> time you open ComfyUI. I feel your pain! Look — I asked Claude to fix this
+> spaghetti nightmare, and it seems it turned out pretty well!
+
+- **One button.** Hit `M` — the whole graph snaps into a tidy table. Hit it
+  again — everything goes back to stock.
+- **Cells.** Nodes live in columns and stack like bricks: full width, never
+  overlapping. Drag one anywhere — the target cell lights up.
+- **Auto-alignment.** Columns follow the dataflow: loaders left, sampler in
+  the middle, outputs right. No knobs to learn.
+- **Tidy routing.** Every cable runs in its own gutter lane, right angles
+  only — a routed PCB, not a plate of pasta.
 
 ![ComfyUI-Manhattan](docs/hero.png)
+
+![Demo](docs/demo.webp)
 
 Purely client-side. No custom node types, no server code, no build step.
 
