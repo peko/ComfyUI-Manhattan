@@ -31,6 +31,44 @@
 import * as model from './model.js';
 import { laneCoord } from './layout.js';
 
+/**
+ * Links whose two nodes sit back to back in one column: no route, a dot in
+ * the gap instead (see paint.js). Adjacency is read off the solved layout --
+ * consecutive by y within a column -- so it follows whatever the stacks
+ * currently look like, including across a row boundary.
+ *
+ * -> Map<linkId, {index, total}>, the index placing several links between one
+ * pair side by side.
+ */
+export function stackedNeighbourLinks(graph, solved) {
+  const byCol = new Map();
+  for (const { node, cell } of model.assignments(graph)) {
+    const spot = solved.nodes.get(node.id);
+    if (!spot) continue;
+    if (!byCol.has(cell.col)) byCol.set(cell.col, []);
+    byCol.get(cell.col).push({ id: node.id, y: spot.y });
+  }
+  const key = (a, b) => (String(a) < String(b) ? `${a}|${b}` : `${b}|${a}`);
+  const adjacent = new Set();
+  for (const list of byCol.values()) {
+    list.sort((p, q) => p.y - q.y);
+    for (let i = 1; i < list.length; i++) adjacent.add(key(list[i - 1].id, list[i].id));
+  }
+
+  const perPair = new Map();
+  const out = new Map();
+  for (const link of graph.links.values()) {
+    if (link.parentId !== undefined) continue;   // a user reroute owns this link
+    const k = key(link.origin_id, link.target_id);
+    if (!adjacent.has(k)) continue;
+    const index = perPair.get(k) ?? 0;
+    perPair.set(k, index + 1);
+    out.set(link.id, { index, key: k });
+  }
+  for (const slot of out.values()) slot.total = perPair.get(slot.key);
+  return out;
+}
+
 /** Deletes every claimed reroute still present, tail-first, and empties the
  * claims map. Tail-first keeps each removeReroute splice trivial. */
 export function cleanup(graph, grid) {
@@ -64,13 +102,14 @@ export function cleanup(graph, grid) {
  * second solver pass, routes carry their lane so materialize() only has to
  * turn (gutter, lane) into coordinates.
  */
-export function planRoutes(graph, solved) {
+export function planRoutes(graph, solved, skip = new Map()) {
   const cellByNode = new Map();
   for (const { node, cell } of model.assignments(graph)) cellByNode.set(node.id, cell);
 
   const routes = [];
   for (const link of graph.links.values()) {
     if (link.parentId !== undefined) continue;   // user reroutes on the chain
+    if (skip.has(link.id)) continue;             // drawn as a dot, see paint.js
     const src = graph.getNodeById(link.origin_id);
     const dst = graph.getNodeById(link.target_id);
     const cs = cellByNode.get(link.origin_id)?.col;

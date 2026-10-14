@@ -111,18 +111,26 @@ function relayout(graph, grid, { reroute }) {
   if (!solved) return null;
   enforce.applySolved(graph, solved);
 
+  /* Links between two nodes stacked back to back get a dot in the gap, not a
+   * trip through the gutters -- computed before routing so the router skips
+   * them, and refreshed on every layout because adjacency moves with it. */
+  let dotted = reroutes.stackedNeighbourLinks(graph, solved);
+
   if (reroute) {
     reroutes.cleanup(graph, grid);
-    const plan = reroutes.planRoutes(graph, solved);
+    const plan = reroutes.planRoutes(graph, solved, dotted);
     solved = layout.solve(def, cells, solveOpts(plan)) ?? solved;
     enforce.applySolved(graph, solved);
     /* Re-plan against final geometry; lane structure matches the first plan
      * (intervals only shifted), the coordinates are what changed. */
-    reroutes.materialize(graph, grid, solved, reroutes.planRoutes(graph, solved));
+    dotted = reroutes.stackedNeighbourLinks(graph, solved);
+    reroutes.materialize(graph, grid, solved,
+                         reroutes.planRoutes(graph, solved, dotted));
   }
 
   reroutes.hideClaimedDots(graph, isClaimedAndActive);
   paint.setBands(solved);
+  paint.setDots(dotted);
   paint.setGhosts(layout.ghosts(solved, model.cfg));
   return solved;
 }
@@ -135,21 +143,45 @@ function isClaimedAndActive(reroute) {
   return !!grid?.enabled && grid.rerouteClaims?.[reroute.id] !== undefined;
 }
 
-/** Orthogonal traces need a non-spline link mode; splines cut every gutter
- * corner. The mode follows the Manhattan toggle: Linear while the grid is
- * on, back to the stock Spline when it goes off. Gated by gridcm.orthoLinks. */
-function setLinkMode(manhattanOn) {
+/**
+ * Canvas preferences the grid needs, and putting them back when it is off.
+ *
+ *   Link Render Mode -- splines cut every gutter corner, so the grid wants
+ *     Linear while it is on.
+ *   Link Markers -- the dot in the middle of each segment (the handle for
+ *     dropping a node into the link) multiplies by the number of segments a
+ *     route has, and the gutters are already busy. Off while the grid is on.
+ *
+ * Whatever the user had before the first activation is remembered and
+ * restored, rather than assuming the stock defaults.
+ */
+let savedPrefs = null;
+
+function applyCanvasPrefs(manhattanOn) {
   if (!orthoLinks) return;
-  const want = manhattanOn ? window.LiteGraph.LINEAR_LINK : window.LiteGraph.SPLINE_LINK;
-  if (app.canvas.links_render_mode === want) return;
-  try {
-    app.ui.settings.setSettingValue('Comfy.LinkRenderMode', want);
-    if (manhattanOn && !announcedLinkMode) {
-      announcedLinkMode = true;
-      toast('Link Render Mode follows the grid: Linear while on, Spline when off (Settings → GridCM to opt out)');
+  const set = (id, value) => {
+    try {
+      app.ui.settings.setSettingValue(id, value);
+    } catch (e) {
+      console.error(`[gridcm] could not set ${id}`, e);
     }
-  } catch (e) {
-    console.error('[gridcm] could not switch link render mode', e);
+  };
+  if (manhattanOn) {
+    savedPrefs ??= {
+      mode: app.canvas.links_render_mode,
+      markers: app.canvas.linkMarkerShape,
+    };
+    set('Comfy.LinkRenderMode', window.LiteGraph.LINEAR_LINK);
+    set('Comfy.Graph.LinkMarkers', 0);          // LinkMarkerShape.None
+    if (!announcedLinkMode) {
+      announcedLinkMode = true;
+      toast('Links switched to Linear with no mid-segment markers while the grid is on '
+            + '(Settings → GridCM to opt out)');
+    }
+  } else if (savedPrefs) {
+    set('Comfy.LinkRenderMode', savedPrefs.mode);
+    set('Comfy.Graph.LinkMarkers', savedPrefs.markers);
+    savedPrefs = null;
   }
 }
 
@@ -327,7 +359,7 @@ function cmdArrange() {
     model.compactColumns(graph, model.getGrid(graph));
     relayout(graph, model.getGrid(graph), { reroute: true });
   });
-  setLinkMode(true);
+  applyCanvasPrefs(true);
   syncToggleButton(true);
 }
 
@@ -364,7 +396,7 @@ function cmdToggleGrid() {
     paint.setBands(null);
     graph.setDirtyCanvas(true, true);
   }
-  setLinkMode(grid.enabled);
+  applyCanvasPrefs(grid.enabled);
   syncToggleButton(grid.enabled);
   toast(grid.enabled ? 'grid on' : 'grid off (cables back to splines, positions stay)');
 }
@@ -495,7 +527,7 @@ app.registerExtension({
     },
     {
       id: 'gridcm.orthoLinks',
-      name: 'Switch Link Render Mode to Linear on arrange',
+      name: 'Linear links, no mid-segment markers, while the grid is on',
       category: ['GridCM', 'Grid', 'Orthogonal links'],
       type: 'boolean',
       defaultValue: true,
@@ -571,6 +603,7 @@ app.registerExtension({
       return graph ? { graph, grid: model.getGrid(graph) } : null;
     };
     paint.install(app, app.canvas, context);
+    paint.installLinkDots(app, context);
     drag.install(app, context, {
       onNodeDragStart: nodeDragStarted,
       onNodeDrop: nodeDropped,

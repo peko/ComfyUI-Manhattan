@@ -22,9 +22,18 @@ const GHOST_STROKE = 'rgba(255, 255, 255, 0.16)';
 const HILITE_FILL = 'rgba(90, 150, 230, 0.16)';
 const HILITE_STROKE = 'rgba(110, 170, 250, 0.75)';
 
+/* A link between two nodes that sit back to back in one column needs no
+ * route: the gutter detour around them is longer than the gap it crosses and
+ * reads as a knot. Those links are drawn as a single dot in the gap instead,
+ * in the slot's type colour. */
+const DOT_RADIUS = 6;
+const DOT_SPACING = 16;        // several links between one pair, side by side
+const DOT_FALLBACK = '#9A9';   // litegraph's defaultLinkColor
+
 let cached = null;     // last solver output, or null when the grid is off
 let highlight = null;  // hitTest result while a drag is live, else null
 let ghostRects = [];   // computed alongside `cached` by the drag layer
+let dots = new Map();  // linkId -> {index, total} for stacked-neighbour links
 
 export function setBands(solved) {
   cached = solved;
@@ -40,6 +49,72 @@ export function setGhosts(rects) {
 
 export function setHighlight(hit) {
   highlight = hit && (hit.type === 'cell' || hit.type === 'ghost') ? hit : null;
+}
+
+export function setDots(map) {
+  dots = map ?? new Map();
+}
+
+export function dotLinkIds() {
+  return dots;
+}
+
+/** Outer box of a node, title included -- the same convention the solver uses. */
+function outerBox(node) {
+  const title = window.LiteGraph.NODE_TITLE_HEIGHT;
+  const h = (node.flags?.collapsed ? 0 : node.size[1]) + title;
+  return { top: node.pos[1] - title, bottom: node.pos[1] - title + h,
+           left: node.pos[0], right: node.pos[0] + node.size[0] };
+}
+
+/**
+ * Replaces one stacked-neighbour link with a dot in the gap between the two
+ * nodes. Geometry is read live rather than cached, so the dot follows a node
+ * that is being dragged instead of hanging where the layout last put it.
+ */
+function drawDot(ctx, graph, link, slot) {
+  const src = graph.getNodeById(link.origin_id);
+  const dst = graph.getNodeById(link.target_id);
+  if (!src || !dst) return false;
+  const a = outerBox(src), b = outerBox(dst);
+  const [upper, lower] = a.top <= b.top ? [a, b] : [b, a];
+  const y = (upper.bottom + lower.top) / 2;
+  const centre = (Math.max(upper.left, lower.left) + Math.min(upper.right, lower.right)) / 2;
+  const spread = (slot.total - 1) * DOT_SPACING;
+  const x = centre - spread / 2 + slot.index * DOT_SPACING;
+
+  const colour = window.LGraphCanvas.link_type_colors?.[link.type] || DOT_FALLBACK;
+  ctx.save();
+  ctx.beginPath();
+  ctx.arc(x, y, DOT_RADIUS, 0, 2 * Math.PI);
+  ctx.fillStyle = colour;
+  ctx.fill();
+  ctx.lineWidth = 1.5;
+  ctx.strokeStyle = 'rgba(0, 0, 0, 0.55)';   // keeps it legible on a pale cell
+  ctx.stroke();
+  ctx.restore();
+  return true;
+}
+
+/**
+ * Wraps renderLink so a stacked-neighbour link draws as a dot and nothing
+ * else. Returning early is what suppresses the stock line; the link is then
+ * absent from renderedPaths, so it has no click target -- which is the point,
+ * the dot is the whole affordance.
+ */
+export function installLinkDots(app, context) {
+  const proto = window.LGraphCanvas.prototype;
+  if (proto.__gridcmDots) return;
+  const original = proto.renderLink;
+  proto.renderLink = function renderLinkOrDot(ctx, a, b, link, ...rest) {
+    const slot = link && dots.get(link.id);
+    if (slot) {
+      const live = context();
+      if (live && drawDot(ctx, live.graph, link, slot)) return;
+    }
+    return original.call(this, ctx, a, b, link, ...rest);
+  };
+  proto.__gridcmDots = true;
 }
 
 /** Chains the background pass onto the canvas. Call once from setup().
