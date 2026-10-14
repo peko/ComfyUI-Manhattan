@@ -72,7 +72,7 @@ number of segments a route has). Opt out in *Settings → GridCM*.
 | drop onto an occupied cell | nodes stack; the drop *y* picks the slot — above the top node's centre lands on top, between two centres lands between |
 | drop onto a dashed **ghost** column/row (always one per side) | splits outward: a fresh column/row is created |
 | drag a **grip** above a vertical gutter | spreadsheet-style column resize, clamped at the widest node's natural width |
-| collapse a node | the stack closes up around it; the collapsed title stretches to the column |
+| collapse a node | the stack closes up around it, reserving only the title bar |
 | stack two connected nodes back to back in one cell | the link between them becomes an **arrow** in the gap, pointing source → target, in the slot's type colour — no gutter detour around a 12 px gap. Across cells the link keeps its route: that is what the gutter is for |
 
 While a node is dragged its cables are released and rubber-band straight to
@@ -135,6 +135,10 @@ ghosts, highlight, grips) · `drag.js` (pointer interception) · `index.js`
 - Frontend-only Get/Set nodes carry no links in the graph JSON, so auto-layout
   places them as islands (column 0) — that's their job: cutting cables.
 - Stale cables during a column-resize drag; they regenerate on release.
+- A collapsed node is drawn at its own title width, not the column's:
+  litegraph recomputes that width from the title text on every frame
+  (`LGraphNode.measure`), and under Vue nodes the DOM decides. Only the
+  stacking accounts for it.
 
 ## License
 

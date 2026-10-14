@@ -121,12 +121,14 @@ export function applySolved(graph, solved) {
     const spot = solved.nodes.get(node.id);
     if (!spot) continue;
     node.pos = [spot.x, spot.y + title];
-    if (node.flags?.collapsed) {
-      /* Collapsed nodes render title-only at _collapsed_width; stretch that
-       * to the column so they read as full-width rows. node.size is left
-       * alone — it still holds the expanded height. */
-      node._collapsed_width = spot.w;
-    } else if (node.size[0] !== spot.w) {
+    /* A collapsed node keeps its stored size (that is the expanded height,
+     * needed when it reopens) and is NOT stretched to the column: its drawn
+     * width is recomputed every frame from the title text --
+     * `_collapsed_width = min(size[0], measureText(title) + 2 * titleHeight)`
+     * in LGraphNode.measure() -- and under Vue nodes the DOM decides instead.
+     * Writing the property looks like it works and is erased before the next
+     * paint. The stack still reserves only the title height for it. */
+    if (!node.flags?.collapsed && node.size[0] !== spot.w) {
       node.setSize([spot.w, node.size[1]]);
     }
   }
@@ -137,8 +139,7 @@ export function applySolved(graph, solved) {
 export function reassertWidths(graph) {
   for (const node of graph._nodes) {
     const w = widthFor(node);
-    if (w === null) continue;
-    if (node.flags?.collapsed) node._collapsed_width = w;
-    else if (node.size[0] !== w) node.setSize([w, node.size[1]]);
+    if (w === null || node.flags?.collapsed) continue;   // see applySolved
+    if (node.size[0] !== w) node.setSize([w, node.size[1]]);
   }
 }
