@@ -92,7 +92,7 @@ cell`.
 | setting | default | meaning |
 |---|---|---|
 | Grid layout features | on | master switch |
-| Switch Link Render Mode to Linear on arrange | on | orthogonal traces need a non-spline mode |
+| Linear links, no mid-segment markers, while the grid is on | on | orthogonal traces need a non-spline mode, and a marker per elbow turns a gutter into a dotted line. Both preferences are restored to whatever you had when the grid goes off |
 | Cell padding | 10 px | cell border to its nodes |
 | Gap between stacked nodes | 12 px | vertical spacing inside a stack |
 | Minimum gutter size | 28 px | a gutter never collapses below this |
