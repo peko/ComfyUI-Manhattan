@@ -32,25 +32,31 @@ import * as model from './model.js';
 import { laneCoord } from './layout.js';
 
 /**
- * Links whose two nodes sit back to back in one column: no route, a dot in
- * the gap instead (see paint.js). Adjacency is read off the solved layout --
- * consecutive by y within a column -- so it follows whatever the stacks
- * currently look like, including across a row boundary.
+ * Links whose two nodes sit back to back **inside one cell**: no route, an
+ * arrow in the gap instead (see paint.js). Adjacency is read off the solved
+ * layout -- consecutive by y within the cell -- so it follows whatever the
+ * stack currently looks like.
+ *
+ * Deliberately per cell, not per column: two nodes in different rows are
+ * separated by a horizontal gutter, and a link that hops a gutter is exactly
+ * what the gutter is for. Only the gap inside a stack is too small to be
+ * worth routing around.
  *
  * -> Map<linkId, {index, total}>, the index placing several links between one
  * pair side by side.
  */
 export function stackedNeighbourLinks(graph, solved) {
-  const byCol = new Map();
+  const byCell = new Map();
   for (const { node, cell } of model.assignments(graph)) {
     const spot = solved.nodes.get(node.id);
     if (!spot) continue;
-    if (!byCol.has(cell.col)) byCol.set(cell.col, []);
-    byCol.get(cell.col).push({ id: node.id, y: spot.y });
+    const cellKey = `${cell.col}:${cell.row}`;
+    if (!byCell.has(cellKey)) byCell.set(cellKey, []);
+    byCell.get(cellKey).push({ id: node.id, y: spot.y });
   }
   const key = (a, b) => (String(a) < String(b) ? `${a}|${b}` : `${b}|${a}`);
   const adjacent = new Set();
-  for (const list of byCol.values()) {
+  for (const list of byCell.values()) {
     list.sort((p, q) => p.y - q.y);
     for (let i = 1; i < list.length; i++) adjacent.add(key(list[i - 1].id, list[i].id));
   }

@@ -73,7 +73,7 @@ number of segments a route has). Opt out in *Settings → GridCM*.
 | drop onto a dashed **ghost** column/row (always one per side) | splits outward: a fresh column/row is created |
 | drag a **grip** above a vertical gutter | spreadsheet-style column resize, clamped at the widest node's natural width |
 | collapse a node | the stack closes up around it; the collapsed title stretches to the column |
-| stack two connected nodes back to back | the link between them becomes a **dot** in the gap, in the slot's type colour — no gutter detour around a 12 px gap |
+| stack two connected nodes back to back in one cell | the link between them becomes an **arrow** in the gap, pointing source → target, in the slot's type colour — no gutter detour around a 12 px gap. Across cells the link keeps its route: that is what the gutter is for |
 
 While a node is dragged its cables are released and rubber-band straight to
 it, so you can see where they lead; the drop re-routes them. Every gesture —
