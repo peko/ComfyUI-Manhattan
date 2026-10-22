@@ -96,7 +96,50 @@ export function adoptNode(node) {
       size[0] = w;
       this.size[0] = w;
     }
+    /* A height change is the stack's business: a preview that just arrived
+     * makes its node taller, and everything below it has to move down or the
+     * two overlap. onResize is also what notifyLayoutChanges calls for every
+     * node the Vue side resized, so this catches DOM-driven growth too. */
+    const height = size?.[1];
+    if (w !== null && Number.isFinite(height) && height !== heights.get(this.id)) {
+      heights.set(this.id, height);
+      requestRelayout(this);
+    }
   };
+  heights.set(node.id, node.size[1]);
+}
+
+/* Height bookkeeping for the resize hook above: only a real change asks for
+ * a relayout, and the relayout is debounced because a single widget can fire
+ * several resizes in one frame. */
+const heights = new Map();
+let relayoutHook = null;
+let pending = null;
+let suppressed = false;
+
+/** index.js hands over the "stack changed, solve again" callback. */
+export function onHeightChange(fn) {
+  relayoutHook = fn;
+}
+
+/** Applying a layout resizes nodes, which would ask for another layout --
+ * the applier brackets itself with this. */
+export function suppressRelayout(fn) {
+  suppressed = true;
+  try {
+    return fn();
+  } finally {
+    suppressed = false;
+  }
+}
+
+function requestRelayout(node) {
+  if (suppressed || !relayoutHook) return;
+  if (pending) clearTimeout(pending);
+  pending = setTimeout(() => {
+    pending = null;
+    if (!suppressed) relayoutHook(node);
+  }, 80);
 }
 
 /** Outer (title included) height of a node as the solver must see it.
@@ -105,7 +148,14 @@ export function adoptNode(node) {
 export function measureOuterHeight(node) {
   const title = window.LiteGraph.NODE_TITLE_HEIGHT;
   if (node.flags?.collapsed) return title;
-  return node.size[1] + title;
+  /* `size` is what the graph stores; `renderingSize` is what is actually on
+   * screen -- max(size, contentSize), where contentSize is reported by the
+   * Vue DOM through a ResizeObserver. They part company whenever a node's
+   * content grows after the fact (an image preview arriving, a text widget
+   * wrapping), and measuring the stored one then lays the next node on top
+   * of it. Take the larger. */
+  const rendered = node.renderingSize?.[1];
+  return Math.max(node.size[1], Number.isFinite(rendered) ? rendered : 0) + title;
 }
 
 /**
@@ -116,6 +166,10 @@ export function measureOuterHeight(node) {
  * above), hence the shift.
  */
 export function applySolved(graph, solved) {
+  return suppressRelayout(() => applySolvedInner(graph, solved));
+}
+
+function applySolvedInner(graph, solved) {
   const title = window.LiteGraph.NODE_TITLE_HEIGHT;
   for (const node of graph._nodes) {
     const spot = solved.nodes.get(node.id);

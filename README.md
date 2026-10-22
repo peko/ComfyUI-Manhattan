@@ -94,7 +94,7 @@ cell`.
 | Grid layout features | on | master switch |
 | Linear links, no mid-segment markers, while the grid is on | on | orthogonal traces need a non-spline mode, and a marker per elbow turns a gutter into a dotted line. Both preferences are restored to whatever you had when the grid goes off |
 | Cell padding | 10 px | cell border to its nodes |
-| Gap between stacked nodes | 12 px | vertical spacing inside a stack |
+| Gap between stacked nodes | 26 px | vertical spacing inside a stack; the adjacency arrow is drawn in it, so going much below ~16 px hides it |
 | Minimum gutter size | 28 px | a gutter never collapses below this |
 | Cable lane spacing | 14 px | centre-to-centre distance of parallel lanes |
 

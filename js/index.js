@@ -598,6 +598,15 @@ app.registerExtension({
   setup() {
     enforce.init(activeGraph);
     enforce.installBase();
+    /* A node that grew (a preview arrived, a widget wrapped) leaves the rest
+     * of its stack sitting on top of it until the layout runs again. Cables
+     * are left alone here: a height change moves nodes, and re-routing every
+     * one of them on each resize tick would be a lot of churn for a stack
+     * that is still settling. */
+    enforce.onHeightChange(() => {
+      const graph = activeGraph();
+      if (graph) transact(() => relayout(graph, model.getGrid(graph), { reroute: false }));
+    });
     const context = () => {
       const graph = activeGraph();
       return graph ? { graph, grid: model.getGrid(graph) } : null;

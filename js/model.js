@@ -34,7 +34,8 @@ export const P_SKIP = 'gridcm.skip';
  */
 export const cfg = {
   cellPad: 10,       // inner padding between a cell border and its nodes
-  nodeGap: 12,       // vertical gap between stacked nodes in one cell
+  nodeGap: 26,       // vertical gap between stacked nodes in one cell;
+                     // wide enough for the adjacency arrow drawn in it
   gutterMin: 28,     // a gutter never collapses below this, even with 0 lanes
   laneSpacing: 14,   // centre-to-centre distance of parallel lanes in a gutter
   laneMargin: 12,    // gutter edge to the first lane
